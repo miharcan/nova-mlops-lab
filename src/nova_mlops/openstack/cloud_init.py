@@ -26,17 +26,24 @@ runcmd:
   - pip3 install -q transformers torch sentencepiece
   - |
     python3 - << 'EOF'
-    from transformers import pipeline
+from transformers import pipeline
 
-    texts = [
-        "I love this product.",
-        "This is the worst experience I've had.",
-        "The service was okay, nothing special."
-    ]
+texts = [
+    "I love this product.",
+    "This is the worst experience I've had.",
+    "The service was okay, nothing special."
+]
 
-    clf = pipeline("sentiment-analysis")
+clf = pipeline("sentiment-analysis")
 
-    for t, r in zip(texts, clf(texts)):
-        print(f"[NOVA-MLOPS] job={job_name} text=\\"{t}\\" label={r['label']} score={r['score']:.3f}")
-    EOF
+for text, result in zip(texts, clf(texts)):
+    print(
+        "[NOVA-MLOPS] job={job} text=\\"{text}\\" label={label} score={score:.3f}".format(
+            job="{job_name}",
+            text=text,
+            label=result["label"],
+            score=result["score"],
+        )
+    )
+EOF
 """
