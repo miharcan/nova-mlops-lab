@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 from nova_mlops.openstack.cloud_init import training_cloud_init
 
@@ -11,7 +12,14 @@ class JobLaunchResult:
     server_name: str
 
 
-def launch_job(conn, name: str, image: str, flavor: str, network: str) -> JobLaunchResult:
+def launch_job(
+    conn,
+    name: str,
+    image: str,
+    flavor: str,
+    network: str,
+    user_data: Optional[str] = None,
+) -> JobLaunchResult:
     img = conn.compute.find_image(image)
     flv = conn.compute.find_flavor(flavor)
     net = conn.network.find_network(network)
@@ -29,17 +37,7 @@ def launch_job(conn, name: str, image: str, flavor: str, network: str) -> JobLau
         image_id=img.id,
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
-        user_data=training_cloud_init(name),
+        user_data=(user_data or training_cloud_init(name)),
     )
     server = conn.compute.wait_for_server(server)
     return JobLaunchResult(server_id=server.id, server_name=server.name)
-
-
-def get_console_logs(conn, server_id: str) -> str:
-    return conn.compute.get_server_console_output(server_id)
-
-
-def delete_server(conn, server_id: str) -> None:
-    srv = conn.compute.get_server(server_id)
-    if srv:
-        conn.compute.delete_server(srv, ignore_missing=True)
