@@ -15,21 +15,19 @@ runcmd:
 """
 
 
-
 def nlp_inference_cloud_init(job_name: str) -> str:
-    # IMPORTANT: must be a plain *string* starting with "#cloud-config"
     return f"""#cloud-config
 package_update: true
 packages:
   - python3-pip
 
-runcmd:
-  - pip3 install -q vaderSentiment
-  - |
-      python3 - << 'EOF'
+write_files:
+  - path: /tmp/nova_mlops_sentiment.py
+    permissions: "0755"
+    content: |
       from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-      job = "{job_name}"
+      job = 'sentiment-demo'
       texts = [
           "I love this product.",
           "This is the worst experience I've had.",
@@ -39,6 +37,8 @@ runcmd:
       a = SentimentIntensityAnalyzer()
       for t in texts:
           s = a.polarity_scores(t)
-          print(f"[NOVA-MLOPS] job={job_name} text=\"{t}\" compound={s['compound']:+.3f}")
-      EOF
+          print("[NOVA-MLOPS] job=%s text=%r compound=%+.3f" % (job, t, s["compound"]))
+runcmd:
+  - [ bash, -lc, "set -euxo pipefail; python3 -m pip install --no-cache-dir -q vaderSentiment; python3 /tmp/nova_mlops_sentiment.py | tee /dev/ttyS0 /var/log/nova-mlops.log" ]
 """
+

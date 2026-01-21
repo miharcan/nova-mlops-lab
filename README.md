@@ -170,13 +170,56 @@ nova-mlops openstack cleanup hello-train
 
 ---
 
-### NLP demo (real ML, VBox-safe)
+## 🧠 NLP Sentiment Analysis Example
+
+This project includes a **minimal NLP inference job** designed to demonstrate how machine-learning workloads can be executed on **OpenStack Nova** using short-lived compute instances.
+
+The focus is on **job orchestration and execution**, not model training.
+
+---
+
+### What This Demonstrates
+
+- CLI-driven ML job submission  
+- On-demand VM provisioning via OpenStack Nova  
+- Automated environment setup using cloud-init  
+- NLP inference execution inside the VM  
+- Result retrieval via Nova console logs  
+- No SSH access or manual VM interaction  
+
+---
+
+### Running the Sentiment Job
 
 ```bash
-nova-mlops openstack run-nlp sentiment-demo
-nova-mlops openstack logs sentiment-demo
-nova-mlops openstack cleanup sentiment-demo
+nova-mlops openstack run-nlp sentiment-demo \
+  --image ubuntu-jammy \
+  --flavor ds1G \
+  --network private
 ```
+
+### Viewing Results
+```bash
+openstack console log show <SERVER_ID> | grep NOVA-MLOPS
+```
+
+Example output:
+```bash
+[NOVA-MLOPS] job=sentiment-demo text='I love this product.' compound=+0.637
+[NOVA-MLOPS] job=sentiment-demo text="This is the worst experience I've had." compound=-0.625
+[NOVA-MLOPS] job=sentiment-demo text='The service was okay, nothing special.' compound=-0.092
+```
+
+### Why This Matters
+
+This execution pattern mirrors real-world batch ML workloads, such as:
+
+- offline inference
+- evaluation or scoring jobs
+- data quality and validation checks
+
+Using Nova console logs as the output channel keeps the workflow stateless, automatable, and cloud-agnostic, while remaining easy to observe and debug.
+
 
 
 ## VirtualBox notes

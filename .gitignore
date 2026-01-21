@@ -3,3 +3,6 @@
 dist/
 build/
 __pycache__/
+.nova-mlops/state/
+.venv/
+.nova-mlops/state/

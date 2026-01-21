@@ -5,6 +5,7 @@ from typing import Optional
 
 from nova_mlops.openstack.cloud_init import training_cloud_init
 
+import base64
 
 @dataclass
 class JobLaunchResult:
@@ -32,13 +33,19 @@ def launch_job(
         raise RuntimeError(f"Network not found: {network}")
 
     server_name = f"mlops-{name}"
+    
+    ud = (user_data or training_cloud_init(name))
+    ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
+
     server = conn.compute.create_server(
         name=server_name,
         image_id=img.id,
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
-        user_data=(user_data or training_cloud_init(name)),
+        user_data=ud_b64,
     )
+
+
     server = conn.compute.wait_for_server(server)
     return JobLaunchResult(server_id=server.id, server_name=server.name)
 
