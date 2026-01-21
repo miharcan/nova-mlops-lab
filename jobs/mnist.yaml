@@ -1,0 +1,11 @@
+name: mnist-cnn
+resources:
+  cloud: local
+run:
+  entrypoint: "python -m nova_mlops.training.pytorch.train"
+  args:
+    epochs: 3
+    batch_size: 128
+    lr: 0.001
+artifacts:
+  output_dir: "artifacts"

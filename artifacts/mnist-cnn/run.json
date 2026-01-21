@@ -1,0 +1,9 @@
+{
+  "args": {
+    "epochs": 3,
+    "batch_size": 128,
+    "lr": 0.001,
+    "output_dir": "artifacts/mnist-cnn"
+  },
+  "duration_s": 0.000240325927734375
+}
