@@ -170,6 +170,15 @@ nova-mlops openstack cleanup hello-train
 
 ---
 
+### NLP demo (real ML, VBox-safe)
+
+```bash
+nova-mlops openstack run-nlp sentiment-demo
+nova-mlops openstack logs sentiment-demo
+nova-mlops openstack cleanup sentiment-demo
+```
+
+
 ## VirtualBox notes
 
 This project is designed to work even when:

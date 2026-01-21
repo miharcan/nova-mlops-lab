@@ -174,3 +174,26 @@ def openstack_cleanup(
     st["status"] = "DELETED"
     write_job_state(name, st)
     print(f"[green]Deleted server[/green] {st['server_id']}")
+
+
+
+@openstack_app.command("run-nlp")
+def openstack_run_nlp(
+    name: str,
+    image: str = "ubuntu-jammy",
+    flavor: str = "m1.small",
+    network: str = "private",
+):
+    from nova_mlops.openstack.connection import get_conn
+    from nova_mlops.openstack.jobs import launch_job
+    from nova_mlops.openstack.cloud_init import nlp_inference_cloud_init
+
+    conn = get_conn()
+    res = launch_job(
+        conn,
+        name=name,
+        image=image,
+        flavor=flavor,
+        network=network,
+        user_data=nlp_inference_cloud_init(name),
+    )

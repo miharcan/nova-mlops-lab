@@ -13,3 +13,30 @@ runcmd:
   - sleep 2
   - echo "[NOVA-MLOPS] job={job_name} step=done"
 """
+
+
+
+def nlp_inference_cloud_init(job_name: str) -> str:
+    return f"""#cloud-config
+package_update: true
+packages:
+  - python3-pip
+
+runcmd:
+  - pip3 install -q transformers torch sentencepiece
+  - |
+    python3 - << 'EOF'
+    from transformers import pipeline
+
+    texts = [
+        "I love this product.",
+        "This is the worst experience I've had.",
+        "The service was okay, nothing special."
+    ]
+
+    clf = pipeline("sentiment-analysis")
+
+    for t, r in zip(texts, clf(texts)):
+        print(f"[NOVA-MLOPS] job={job_name} text=\\"{t}\\" label={r['label']} score={r['score']:.3f}")
+    EOF
+"""
