@@ -180,15 +180,19 @@ def openstack_cleanup(
 @openstack_app.command("run-nlp")
 def openstack_run_nlp(
     name: str,
-    image: str = "ubuntu-jammy",
-    flavor: str = "m1.small",
-    network: str = "private",
+    image: str = typer.Option("ubuntu-jammy", help="Image name (Glance)"),
+    flavor: str = typer.Option("m1.small", help="Flavor name"),
+    network: str = typer.Option("private", help="Tenant network name"),
+    cloud: str = typer.Option(None, help="Cloud name from clouds.yaml"),
 ):
+    """
+    Launch a quick NLP inference demo as a Nova instance (cloud-init).
+    """
     from nova_mlops.openstack.connection import get_conn
     from nova_mlops.openstack.jobs import launch_job
     from nova_mlops.openstack.cloud_init import nlp_inference_cloud_init
 
-    conn = get_conn()
+    conn = get_conn(cloud=cloud)
     res = launch_job(
         conn,
         name=name,
@@ -197,3 +201,21 @@ def openstack_run_nlp(
         network=network,
         user_data=nlp_inference_cloud_init(name),
     )
+
+    write_job_state(
+        name,
+        {
+            "name": name,
+            "backend": "openstack",
+            "cloud": cloud,
+            "server_id": res.server_id,
+            "server_name": res.server_name,
+            "image": image,
+            "flavor": flavor,
+            "network": network,
+            "status": "RUNNING",
+            "kind": "nlp",
+        },
+    )
+
+    print({"job": name, "server_id": res.server_id, "server_name": res.server_name})
