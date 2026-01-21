@@ -39,6 +39,6 @@ runcmd:
       a = SentimentIntensityAnalyzer()
       for t in texts:
           s = a.polarity_scores(t)
-          print(f"[NOVA-MLOPS] job={job} text=\\"{t}\\" compound={s['compound']:+.3f}")
+          print(f"[NOVA-MLOPS] job={job_name} text=\"{t}\" compound={s['compound']:+.3f}")
       EOF
 """
