@@ -202,20 +202,19 @@ def openstack_run_nlp(
         user_data=nlp_inference_cloud_init(name),
     )
 
+
     write_job_state(
         name,
         {
             "name": name,
             "backend": "openstack",
-            "cloud": cloud,
+            "cloud": None,
             "server_id": res.server_id,
             "server_name": res.server_name,
             "image": image,
             "flavor": flavor,
             "network": network,
             "status": "RUNNING",
-            "kind": "nlp",
         },
     )
-
     print({"job": name, "server_id": res.server_id, "server_name": res.server_name})

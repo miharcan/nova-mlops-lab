@@ -17,33 +17,28 @@ runcmd:
 
 
 def nlp_inference_cloud_init(job_name: str) -> str:
-    cloud_cfg = """#cloud-config
+    # IMPORTANT: must be a plain *string* starting with "#cloud-config"
+    return f"""#cloud-config
 package_update: true
 packages:
   - python3-pip
 
 runcmd:
-  - pip3 install -q transformers torch sentencepiece
+  - pip3 install -q vaderSentiment
   - |
-    python3 - << 'EOF'
-from transformers import pipeline
+      python3 - << 'EOF'
+      from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-texts = [
-    "I love this product.",
-    "This is the worst experience I've had.",
-    "The service was okay, nothing special."
-]
+      job = "{job_name}"
+      texts = [
+          "I love this product.",
+          "This is the worst experience I've had.",
+          "The service was okay, nothing special.",
+      ]
 
-clf = pipeline("sentiment-analysis")
-
-for text, result in zip(texts, clf(texts)):
-    print(
-        "[NOVA-MLOPS] job=__JOB_NAME__ text=\\"{text}\\" label={label} score={score:.3f}".format(
-            text=text,
-            label=result["label"],
-            score=result["score"],
-        )
-    )
-EOF
+      a = SentimentIntensityAnalyzer()
+      for t in texts:
+          s = a.polarity_scores(t)
+          print(f"[NOVA-MLOPS] job={job} text=\\"{t}\\" compound={s['compound']:+.3f}")
+      EOF
 """
-    return cloud_cfg.replace("__JOB_NAME__", job_name)

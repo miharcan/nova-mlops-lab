@@ -43,15 +43,6 @@ def launch_job(
     return JobLaunchResult(server_id=server.id, server_name=server.name)
 
 
-def get_console_logs(conn, server_id: str, length: int | None = 2000) -> str:
-    """
-    Return Nova console output for a server.
-
-    Args:
-        conn: openstacksdk connection
-        server_id: Nova server UUID
-        length: max number of lines (None = Nova default / full)
-
-    """
-    # openstacksdk accepts either an ID or a Server object
-    return conn.compute.get_server_console_output(server_id, length=length) or ""
+def get_console_logs(conn, server_id: str, length: int | None = None) -> str:
+    # openstacksdk supports console logs via compute proxy
+    return conn.compute.get_server_console_output(server_id, length=length)
