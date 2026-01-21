@@ -17,7 +17,7 @@ runcmd:
 
 
 def nlp_inference_cloud_init(job_name: str) -> str:
-    return f"""#cloud-config
+    cloud_cfg = """#cloud-config
 package_update: true
 packages:
   - python3-pip
@@ -38,8 +38,7 @@ clf = pipeline("sentiment-analysis")
 
 for text, result in zip(texts, clf(texts)):
     print(
-        "[NOVA-MLOPS] job={job} text=\\"{text}\\" label={label} score={score:.3f}".format(
-            job="{job_name}",
+        "[NOVA-MLOPS] job=__JOB_NAME__ text=\\"{text}\\" label={label} score={score:.3f}".format(
             text=text,
             label=result["label"],
             score=result["score"],
@@ -47,3 +46,4 @@ for text, result in zip(texts, clf(texts)):
     )
 EOF
 """
+    return cloud_cfg.replace("__JOB_NAME__", job_name)
