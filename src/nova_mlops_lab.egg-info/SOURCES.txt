@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 src/nova_mlops/__init__.py
 src/nova_mlops/cli.py
