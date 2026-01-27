@@ -11,6 +11,7 @@ import base64
 class JobLaunchResult:
     server_id: str
     server_name: str
+    volume_id: str | None = None
 
 
 def launch_job(
@@ -20,6 +21,8 @@ def launch_job(
     flavor: str,
     network: str,
     user_data: Optional[str] = None,
+    cinder_volume_size_gb: int | None = None,
+    cinder_volume_name: str | None = None,
 ) -> JobLaunchResult:
     img = conn.compute.find_image(image)
     flv = conn.compute.find_flavor(flavor)
@@ -33,6 +36,24 @@ def launch_job(
         raise RuntimeError(f"Network not found: {network}")
 
     server_name = f"mlops-{name}"
+
+    volume_id: str | None = None
+    bdmv2 = None
+    if cinder_volume_size_gb:
+        vol_name = cinder_volume_name or f"mlops-{name}-results"
+        vol = conn.block_storage.create_volume(name=vol_name, size=cinder_volume_size_gb)
+        vol = conn.block_storage.wait_for_status(vol, status="available", failures=["error"], interval=2, wait=600)
+        volume_id = vol.id
+        # Attach as a data volume (commonly appears as /dev/vdb)
+        bdmv2 = [
+            {
+                "uuid": volume_id,
+                "source_type": "volume",
+                "destination_type": "volume",
+                "boot_index": -1,
+                "delete_on_termination": False,
+            }
+        ]
     
     ud = (user_data or training_cloud_init(name))
     ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
@@ -43,11 +64,12 @@ def launch_job(
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
         user_data=ud_b64,
+        block_device_mapping_v2=bdmv2,
     )
 
 
     server = conn.compute.wait_for_server(server)
-    return JobLaunchResult(server_id=server.id, server_name=server.name)
+    return JobLaunchResult(server_id=server.id, server_name=server.name, volume_id=volume_id)
 
 
 def get_console_logs(conn, server_id: str, length: int | None = None) -> str:

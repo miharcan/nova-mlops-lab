@@ -156,6 +156,10 @@ def openstack_logs(
 def openstack_cleanup(
     name: str,
     cloud: str = typer.Option(None, help="Cloud name from clouds.yaml (optional)"),
+    delete_volume: bool = typer.Option(
+        False,
+        help="Also delete the job's Cinder results volume if one was created.",
+    ),
 ):
     """
     Delete the Nova instance for a job (idempotent).
@@ -171,6 +175,14 @@ def openstack_cleanup(
     conn = get_conn(cloud=cloud or st.get("cloud"))
     delete_server(conn, st["server_id"])
 
+    if delete_volume and st.get("volume_id"):
+        # Best-effort; volume may already be deleted or still in-use.
+        try:
+            conn.block_storage.delete_volume(st["volume_id"], ignore_missing=True)
+            print(f"[green]Deleted volume[/green] {st['volume_id']}")
+        except Exception as e:
+            print(f"[yellow]Could not delete volume[/yellow] {st['volume_id']}: {e}")
+
     st["status"] = "DELETED"
     write_job_state(name, st)
     print(f"[green]Deleted server[/green] {st['server_id']}")
@@ -184,6 +196,10 @@ def openstack_run_nlp(
     flavor: str = typer.Option("m1.small", help="Flavor name"),
     network: str = typer.Option("private", help="Tenant network name"),
     cloud: str = typer.Option(None, help="Cloud name from clouds.yaml"),
+    cinder_volume_size_gb: int = typer.Option(
+        1,
+        help="Create and attach a Cinder data volume of this size (GB) at /dev/vdb for job artifacts. Set 0 to disable.",
+    ),
 ):
     """
     Launch a quick NLP inference demo as a Nova instance (cloud-init).
@@ -200,6 +216,8 @@ def openstack_run_nlp(
         flavor=flavor,
         network=network,
         user_data=nlp_inference_cloud_init(name),
+        cinder_volume_size_gb=(cinder_volume_size_gb if cinder_volume_size_gb > 0 else None),
+        cinder_volume_name=f"mlops-{name}-results",
     )
 
 
@@ -208,9 +226,10 @@ def openstack_run_nlp(
         {
             "name": name,
             "backend": "openstack",
-            "cloud": None,
+            "cloud": cloud,
             "server_id": res.server_id,
             "server_name": res.server_name,
+            "volume_id": res.volume_id,
             "image": image,
             "flavor": flavor,
             "network": network,

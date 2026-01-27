@@ -196,29 +196,77 @@ nova-mlops openstack run-nlp sentiment-demo \
   --image ubuntu-jammy \
   --flavor ds1G \
   --network private
+
+By default, `run-nlp` also creates a small **Cinder** data volume for artifacts
+and attaches it to the instance as `/dev/vdb`.
+
+You can disable the volume (console-logs only) with:
+
+```bash
+nova-mlops openstack run-nlp sentiment-demo \
+  --image ubuntu-jammy \
+  --flavor m1.small \
+  --network private \
+  --cinder-volume-size-gb 0
 ```
 
-### Viewing Results
+---
+
+## Production-style demo: Nova + Cinder (no SSH)
+
+This repo intentionally avoids "SSH into a VM and run a script" as the core story.
+Instead, the demo is:
+
+1) **Nova** launches an ephemeral worker via cloud-init
+2) The job writes outputs to:
+   - the **Nova console log** (always)
+   - a **Cinder volume** mounted at `/mnt/results` (when attached)
+3) You inspect the job via CLI and/or **Horizon**
+
+### Observe logs
+
 ```bash
-openstack console log show <SERVER_ID> | grep NOVA-MLOPS
+nova-mlops openstack logs sentiment-demo | grep NOVA-MLOPS
 ```
 
-Example output:
+### Inspect artifacts in Horizon (Cinder)
+
+In Horizon:
+
+- **Project → Compute → Instances**: find `mlops-sentiment-demo` (or your job)
+- **Project → Volumes → Volumes**: find `mlops-sentiment-demo-results`
+
+To read the files on the volume (no SSH required), attach the volume to any helper VM
+from Horizon (or CLI) and mount it:
+
 ```bash
+sudo mkdir -p /mnt/results
+sudo mount /dev/vdb /mnt/results
+ls -lah /mnt/results
+cat /mnt/results/result.json
+```
+
+### Cleanup
+
+Delete only the server (keep the volume for auditing/demo):
+
+```bash
+nova-mlops openstack cleanup sentiment-demo
+```
+
+Delete server **and** the results volume:
+
+```bash
+nova-mlops openstack cleanup sentiment-demo --delete-volume
+```
+
+Example console output:
+
+```text
 [NOVA-MLOPS] job=sentiment-demo text='I love this product.' compound=+0.637
 [NOVA-MLOPS] job=sentiment-demo text="This is the worst experience I've had." compound=-0.625
 [NOVA-MLOPS] job=sentiment-demo text='The service was okay, nothing special.' compound=-0.092
 ```
-
-### Why This Matters
-
-This execution pattern mirrors real-world batch ML workloads, such as:
-
-- offline inference
-- evaluation or scoring jobs
-- data quality and validation checks
-
-Using Nova console logs as the output channel keeps the workflow stateless, automatable, and cloud-agnostic, while remaining easy to observe and debug.
 
 
 
