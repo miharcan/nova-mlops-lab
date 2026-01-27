@@ -39,33 +39,42 @@ def launch_job(
 
     volume_id: str | None = None
     bdmv2 = None
-    if cinder_volume_size_gb:
+   
+    # Normalize 0/negative to "no volume"
+    if cinder_volume_size_gb is not None and cinder_volume_size_gb <= 0:
+        cinder_volume_size_gb = None
+
+    if cinder_volume_size_gb is not None:
         vol_name = cinder_volume_name or f"mlops-{name}-results"
         vol = conn.block_storage.create_volume(name=vol_name, size=cinder_volume_size_gb)
-        vol = conn.block_storage.wait_for_status(vol, status="available", failures=["error"], interval=2, wait=600)
+        vol = conn.block_storage.wait_for_status(
+            vol, status="available", failures=["error"], interval=2, wait=600
+        )
         volume_id = vol.id
-        # Attach as a data volume (commonly appears as /dev/vdb)
-        bdmv2 = [
-            {
-                "uuid": volume_id,
-                "source_type": "volume",
-                "destination_type": "volume",
-                "boot_index": -1,
-                "delete_on_termination": False,
-            }
-        ]
-    
+        bdmv2 = [{
+            "uuid": volume_id,
+            "source_type": "volume",
+            "destination_type": "volume",
+            "boot_index": -1,
+            "delete_on_termination": False,
+        }]
+
+
     ud = (user_data or training_cloud_init(name))
     ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
 
-    server = conn.compute.create_server(
+    create_kwargs = dict(
         name=server_name,
         image_id=img.id,
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
         user_data=ud_b64,
-        block_device_mapping_v2=bdmv2,
     )
+
+    if bdmv2 is not None:
+        create_kwargs["block_device_mapping_v2"] = bdmv2
+
+    server = conn.compute.create_server(**create_kwargs)
 
 
     server = conn.compute.wait_for_server(server)

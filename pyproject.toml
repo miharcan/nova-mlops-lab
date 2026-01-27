@@ -22,10 +22,3 @@ nova-mlops = "nova_mlops.cli:app"
 
 [tool.ruff]
 line-length = 100
-
-dependencies = [
-  "typer",
-  "rich",
-  "pyyaml",
-  "openstacksdk",
-]
