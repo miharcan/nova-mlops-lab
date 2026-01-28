@@ -14,14 +14,7 @@ runcmd:
   - echo "[NOVA-MLOPS] job={job_name} step=done"
 """
 
-
 def nlp_inference_cloud_init(job_name: str) -> str:
-    """
-    Return cloud-init user-data that installs vaderSentiment, runs a tiny sentiment job,
-    writes results to /mnt/results if a Cinder volume is attached as /dev/vdb,
-    and prints progress to the console.
-    """
-    #cloud-config
     return f"""#cloud-config
 package_update: true
 packages:
@@ -30,53 +23,64 @@ packages:
 
 runcmd:
   - |
-      set -euxo pipefail
-      echo "[NOVA-MLOPS] job={job_name} starting" | tee /dev/console
+      set -eu
 
-      # If a Cinder volume is attached, it usually appears as /dev/vdb in DevStack
+      mkdir -p /var/log/mlops
+      LOG=/var/log/mlops/job.log
+      exec >>"$LOG" 2>&1
+      tail -n +1 -f "$LOG" >/dev/console &
+
+      echo "[NOVA-MLOPS] job={job_name} starting"
+
+      apt-get update -y
+      apt-get install -y python3-venv python3-full
+
+      python3 -m venv /opt/mlops-venv
+      /opt/mlops-venv/bin/pip install --upgrade pip
+      /opt/mlops-venv/bin/pip install vaderSentiment
+
       DEV="/dev/vdb"
       MNT="/mnt/results"
 
       if [ -b "$DEV" ]; then
         mkdir -p "$MNT"
-        # Format only if it looks unformatted
         if ! blkid "$DEV" >/dev/null 2>&1; then
           mkfs.ext4 -F "$DEV"
         fi
         mount "$DEV" "$MNT"
-        echo "[NOVA-MLOPS] mounted $DEV at $MNT" | tee /dev/console
+        echo "[NOVA-MLOPS] mounted $DEV at $MNT"
       else
-        echo "[NOVA-MLOPS] no cinder volume detected at $DEV; using /tmp" | tee /dev/console
+        echo "[NOVA-MLOPS] no cinder volume detected at $DEV; using /tmp"
         MNT="/tmp"
       fi
 
-      python3 - <<'PY'
-import json
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+      /opt/mlops-venv/bin/python - <<'PY'
+      import json
+      from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-job = {job_name!r}
-texts = [
-  "OpenStack executed this workload successfully.",
-  "The networking setup was painful but now it's solid.",
-  "I would not recommend debugging NAT at midnight."
-]
+      job = "{job_name}"
+      texts = [
+        "OpenStack executed this workload successfully.",
+        "The networking setup was painful but now it's solid.",
+        "I would not recommend debugging NAT at midnight."
+      ]
 
-a = SentimentIntensityAnalyzer()
-out = []
-for t in texts:
-    s = a.polarity_scores(t)
-    out.append({{"text": t, **s}})
-    print(f"[NOVA-MLOPS] job={{job}} compound={{s['compound']:+.3f}} text={{t!r}}", flush=True)
+      a = SentimentIntensityAnalyzer()
+      out = []
+      for t in texts:
+          s = a.polarity_scores(t)
+          out.append({{"text": t, **s}})
+          print(f"[NOVA-MLOPS] job={{job}} compound={{s['compound']:+.3f}} text={{t!r}}", flush=True)
 
-with open("/tmp/result.json", "w") as f:
-    json.dump({{"job": job, "results": out}}, f)
+      with open("/tmp/result.json", "w") as f:
+          json.dump({{"job": job, "results": out}}, f)
 
-print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
-PY
+      print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
+      PY
 
       cp -f /tmp/result.json "$MNT/result.json"
       sync
-      echo "[NOVA-MLOPS] job={job_name} done; result at $MNT/result.json" | tee /dev/console
+      echo "[NOVA-MLOPS] job={job_name} done; result at $MNT/result.json"
       poweroff
 """
 
