@@ -15,11 +15,49 @@ runcmd:
 """
 
 def nlp_inference_cloud_init(job_name: str) -> str:
-    return f"""#cloud-config
+    # IMPORTANT:
+    # - Do NOT use a Python f-string for the whole cloud-init template.
+    # - Use a token replace so any braces inside (python f-strings, etc.) remain literal.
+    tpl = """#cloud-config
 package_update: true
 packages:
-  - python3-pip
   - util-linux
+  - python3-venv
+  - python3-full
+
+write_files:
+  - path: /opt/mlops/run_sentiment.py
+    permissions: "0644"
+    owner: root:root
+    content: |
+      import json
+      import os
+      from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+      job = "__JOB_NAME__"
+      input_path = "/tmp/input.txt"
+
+      if os.path.exists(input_path):
+          with open(input_path, "r", encoding="utf-8") as f:
+              texts = [ln.strip() for ln in f if ln.strip()]
+      else:
+          texts = [
+              "OpenStack executed this workload successfully.",
+              "The networking setup was painful but now it's solid.",
+              "I would not recommend debugging NAT at midnight."
+          ]
+
+      a = SentimentIntensityAnalyzer()
+      out = []
+      for t in texts:
+          s = a.polarity_scores(t)
+          out.append({"text": t, **s})
+          print(f"[NOVA-MLOPS] job={job} compound={s['compound']:+.3f} text={t!r}", flush=True)
+
+      with open("/tmp/result.json", "w", encoding="utf-8") as f:
+          json.dump({"job": job, "results": out}, f)
+
+      print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
 
 runcmd:
   - |
@@ -30,22 +68,22 @@ runcmd:
       exec >>"$LOG" 2>&1
       tail -n +1 -f "$LOG" >/dev/console &
 
-      echo "[NOVA-MLOPS] job={job_name} starting"
+      JOB_NAME="__JOB_NAME__"
+
+      echo "[NOVA-MLOPS] job=$JOB_NAME starting"
 
       apt-get update -y
-      apt-get install -y python3-venv python3-full
-
       python3 -m venv /opt/mlops-venv
       /opt/mlops-venv/bin/pip install --upgrade pip
 
-      # Install deps: sentiment + openstack client (for Swift)
+      # Deps: sentiment + openstack client for Swift
       /opt/mlops-venv/bin/pip install vaderSentiment python-openstackclient
 
       # -----------------------------
       # Swift auth via App Credential
       # -----------------------------
       export OS_AUTH_TYPE="v3applicationcredential"
-      export OS_AUTH_URL="http://192.168.122.109/identity/v3"
+      export OS_AUTH_URL="http://192.168.122.109/identity"
       export OS_REGION_NAME="RegionOne"
       export OS_INTERFACE="public"
       export OS_IDENTITY_API_VERSION="3"
@@ -85,61 +123,33 @@ runcmd:
       # -----------------------------
       # Run sentiment + write result
       # -----------------------------
-      /opt/mlops-venv/bin/python - <<'PY'
-import json, os
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-
-job = "{job_name}"
-input_path = "/tmp/input.txt"
-
-if os.path.exists(input_path):
-    with open(input_path, "r", encoding="utf-8") as f:
-        texts = [ln.strip() for ln in f.readlines() if ln.strip()]
-else:
-    texts = [
-        "OpenStack executed this workload successfully.",
-        "The networking setup was painful but now it's solid.",
-        "I would not recommend debugging NAT at midnight."
-    ]
-
-a = SentimentIntensityAnalyzer()
-out = []
-for t in texts:
-    s = a.polarity_scores(t)
-    out.append({{"text": t, **s}})
-    print(f"[NOVA-MLOPS] job={{job}} compound={{s['compound']:+.3f}} text={{t!r}}", flush=True)
-
-with open("/tmp/result.json", "w", encoding="utf-8") as f:
-    json.dump({{"job": job, "results": out}}, f)
-
-print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
-PY
+      /opt/mlops-venv/bin/python /opt/mlops/run_sentiment.py
 
       # Copy to mounted results path if present
       if [ "$MNT" != "/tmp" ]; then
         cp -f /tmp/result.json "$MNT/result.json"
         echo "[NOVA-MLOPS] copied result to $MNT/result.json"
       else
-        echo "[NOVA-MLOPS] MNT=/tmp, result stays at /tmp/result.json"
+        echo "[NOVA-MLOPS] MNT=/tmp, skipping copy"
       fi
 
       sync
-      echo "[NOVA-MLOPS] job={job_name} done"
+      echo "[NOVA-MLOPS] job=$JOB_NAME done; result at $MNT/result.json"
 
       # -----------------------------
       # Upload result to Swift
       # -----------------------------
       TS=$(date +%s)
-      OBJ="results/{job_name}-${{TS}}.json"
-      /opt/mlops-venv/bin/openstack object create mlops-artifacts /tmp/result.json --name "$OBJ" || true
+      OBJ="results/${JOB_NAME}-${TS}.json"
+      /opt/mlops-venv/bin/openstack object create mlops-artifacts /tmp/result.json --name "$OBJ"
       echo "[NOVA-MLOPS] uploaded swift://mlops-artifacts/$OBJ"
 
       echo "===MLOPS_RESULT==="; cat /tmp/result.json
-
       echo "===MLOPS_SWIFT_OBJECT==="
       echo "container=mlops-artifacts object=$OBJ"
       echo "===MLOPS_SWIFT_OBJECT_END==="
 
       poweroff
 """
+    return tpl.replace("__JOB_NAME__", job_name)
 
