@@ -1,94 +1,102 @@
 # nova-mlops-lab
 
-**OpenStack-first MLOps job runner** with a *LightSpeed-style* interface:
+OpenStack-first MLOps job runner with a **LightSpeed-style interface**:
 
 ```
 run → logs → cleanup
 ```
 
-Designed for **DevStack labs** and environments where OpenStack runs inside **VirtualBox**, where:
-- floating IPs may not work
-- direct SSH may be unreliable
-- networking is constrained
+Designed for **DevStack labs** where OpenStack runs inside a **KVM VM**, and where:
 
-This project intentionally works **without floating IPs or SSH**.
+- Floating IPs can be fragile until `br-ex` is wired correctly
+- Direct SSH access to instances may be unreliable or intentionally unavailable
+- Networking state can change after restacks / reboots
+
+This project intentionally works **without requiring SSH into instances**. It relies on **cloud-init** and **Nova console logs** to run and observe workloads.
 
 ---
 
-## Why this exists
+## What you learn by using this repo
 
-When learning or demoing OpenStack, you want something *real* to run — not just `cirros ping`.
+This repo is a practical “operator-style” OpenStack lab. It teaches how to:
 
-`nova-mlops-lab` turns **Nova instances into ephemeral job runners**:
-
-- Launch a “job” as a Nova server
-- Execute via **cloud-init** (boot-time payload)
-- Observe progress via **Nova console logs**
-- Tear everything down cleanly
-
-This mirrors how OpenStack operators debug early boot, cloud-init failures, and instance lifecycle issues in real environments.
+- Launch ephemeral workloads as Nova servers
+- Use cloud-init as the execution mechanism (boot-time payload)
+- Debug boot and workload failures via **console logs**, not SSH
+- Understand the Neutron data path (router namespaces, `qg-*`, `qr-*`, `br-ex`)
+- Recover external connectivity when `br-ex` wiring or host routing is wrong
+- Collect structured job outputs (JSON) without logging into instances
 
 ---
 
 ## Current MVP
 
 ### OpenStack probes
-- `nova-mlops openstack ping`
-- `nova-mlops openstack images`
-- `nova-mlops openstack flavors`
-- `nova-mlops openstack networks`
 
-### VBox-safe job execution
-- `nova-mlops openstack run <job>`
-- `nova-mlops openstack logs <job>`
-- `nova-mlops openstack cleanup <job>`
+```bash
+nova-mlops openstack ping
+nova-mlops openstack images
+nova-mlops openstack flavors
+nova-mlops openstack networks
+```
+
+### Job execution
+
+```bash
+nova-mlops openstack run <job>
+nova-mlops openstack logs <job>
+nova-mlops openstack cleanup <job>
+```
 
 ### Local job state
 
 ```text
 .nova-mlops/state/
-  hello-train.json
+  <job-name>.json
 ```
 
 No daemon. No database. Fully CLI-driven.
 
 ---
 
-## Architecture (MVP)
+## How it works
 
-The CLI is **stateless** between invocations.
+The CLI is intentionally **stateless between invocations**:
 
-- `run` → creates a Nova server and stores `server_id`
-- `logs` → fetches Nova console output
-- `cleanup` → deletes the Nova server and updates state
+- `run` creates a Nova server and stores the `server_id` locally
+- `logs` fetches Nova console output (your primary observability surface)
+- `cleanup` deletes the server and updates local state
 
-This keeps the system transparent, debuggable, and easy to extend.
+This mirrors real OpenStack debugging: early-boot visibility is through console logs and cloud-init telemetry.
 
 ---
 
 ## Prerequisites
 
 ### Recommended environment
-Run on the **DevStack host** (e.g. Ubuntu24 VM).
+
+Run OpenStack (DevStack) **inside a KVM VM**, not directly on your daily desktop. This keeps your host clean and makes rollback easy (snapshots).
 
 You need:
+
 - A working DevStack installation
 - `openstack` CLI working (`openstack token issue`)
 - Python **≥ 3.10**
 
 ### OpenStack authentication
-`openstacksdk` uses the same auth sources as the `openstack` CLI:
+
+`openstacksdk` uses the same auth sources as the OpenStack CLI:
 
 - `source openrc ...`
-- or `~/.config/openstack/clouds.yaml`
+- `~/.config/openstack/clouds.yaml`
 
 ---
 
-## Quickstart (DevStack / Ubuntu24)
+## Quickstart (DevStack / Ubuntu 24.04)
 
 ### 1) Clone and create a virtual environment
 
-Ubuntu 24.04 enforces **PEP 668**, so use a virtual environment:
+Ubuntu 24.04 enforces PEP 668. Use a virtual environment:
 
 ```bash
 git clone https://github.com/miharcan/nova-mlops-lab.git
@@ -108,175 +116,116 @@ sudo apt update
 sudo apt install -y python3-venv python3-full
 ```
 
----
-
-### 2) Load DevStack credentials
+### 2) Validate OpenStack access
 
 ```bash
-source ~/devstack/openrc admin admin
+source /opt/stack/devstack/openrc admin admin
 openstack token issue
+openstack server list
 ```
 
----
+### 3) Run a job
 
-### 3) Verify OpenStack connectivity
+> **Important:** `ubuntu-24.04` requires at least `m1.small`.
 
 ```bash
-nova-mlops openstack ping
+nova-mlops openstack run sentiment-demo   --image ubuntu-24.04   --flavor m1.small   --network private
 ```
 
----
-
-### 4) Discover available resources
+### 4) Read logs
 
 ```bash
-nova-mlops openstack images
-nova-mlops openstack flavors
-nova-mlops openstack networks
+nova-mlops openstack logs sentiment-demo
 ```
 
-Typical DevStack example:
-
-- Image: `ubuntu-jammy`
-- Flavor: `m1.small`
-- Network: `private`
-
----
-
-### 5) Run a VBox-safe “training job”
-
-```bash
-nova-mlops openstack run hello-train \
-  --image ubuntu-jammy \
-  --flavor m1.small \
-  --network private
-```
-
----
-
-### 6) View logs (no SSH required)
-
-```bash
-nova-mlops openstack logs hello-train
-```
-
----
-
-### 7) Clean up the server
-
-```bash
-nova-mlops openstack cleanup hello-train
-```
-
----
-
-## 🧠 NLP Sentiment Analysis Example
-
-This project includes a **minimal NLP inference job** designed to demonstrate how machine-learning workloads can be executed on **OpenStack Nova** using short-lived compute instances.
-
-The focus is on **job orchestration and execution**, not model training.
-
----
-
-### What This Demonstrates
-
-- CLI-driven ML job submission  
-- On-demand VM provisioning via OpenStack Nova  
-- Automated environment setup using cloud-init  
-- NLP inference execution inside the VM  
-- Result retrieval via Nova console logs  
-- No SSH access or manual VM interaction  
-
----
-
-### Running the Sentiment Job
-
-```bash
-nova-mlops openstack run-nlp sentiment-demo \
-  --image ubuntu-jammy \
-  --flavor ds1G \
-  --network private
-
-By default, `run-nlp` also creates a small **Cinder** data volume for artifacts
-and attaches it to the instance as `/dev/vdb`.
-
-You can disable the volume (console-logs only) with:
-
-```bash
-nova-mlops openstack run-nlp sentiment-demo \
-  --image ubuntu-jammy \
-  --flavor m1.small \
-  --network private \
-  --cinder-volume-size-gb 0
-```
-
----
-
-## Production-style demo: Nova + Cinder (no SSH)
-
-This repo intentionally avoids "SSH into a VM and run a script" as the core story.
-Instead, the demo is:
-
-1) **Nova** launches an ephemeral worker via cloud-init
-2) The job writes outputs to:
-   - the **Nova console log** (always)
-   - a **Cinder volume** mounted at `/mnt/results` (when attached)
-3) You inspect the job via CLI and/or **Horizon**
-
-### Observe logs
-
-```bash
-nova-mlops openstack logs sentiment-demo | grep NOVA-MLOPS
-```
-
-### Inspect artifacts in Horizon (Cinder)
-
-In Horizon:
-
-- **Project → Compute → Instances**: find `mlops-sentiment-demo` (or your job)
-- **Project → Volumes → Volumes**: find `mlops-sentiment-demo-results`
-
-To read the files on the volume (no SSH required), attach the volume to any helper VM
-from Horizon (or CLI) and mount it:
-
-```bash
-sudo mkdir -p /mnt/results
-sudo mount /dev/vdb /mnt/results
-ls -lah /mnt/results
-cat /mnt/results/result.json
-```
-
-### Cleanup
-
-Delete only the server (keep the volume for auditing/demo):
+### 5) Cleanup
 
 ```bash
 nova-mlops openstack cleanup sentiment-demo
 ```
 
-Delete server **and** the results volume:
+---
+
+## Getting job outputs (JSON) without SSH
+
+The sentiment demo emits **structured JSON** that you can collect in two ways:
+
+### Option A: Parse JSON from Nova console logs (default)
 
 ```bash
-nova-mlops openstack cleanup sentiment-demo --delete-volume
+nova-mlops openstack logs sentiment-demo
 ```
 
-Example console output:
+You should see output similar to:
 
-```text
-[NOVA-MLOPS] job=sentiment-demo text='I love this product.' compound=+0.637
-[NOVA-MLOPS] job=sentiment-demo text="This is the worst experience I've had." compound=-0.625
-[NOVA-MLOPS] job=sentiment-demo text='The service was okay, nothing special.' compound=-0.092
+```json
+{
+  "job": "sentiment-demo",
+  "results": [
+    {
+      "text": "OpenStack executed this workload successfully.",
+      "neg": 0.0,
+      "neu": 0.556,
+      "pos": 0.444,
+      "compound": 0.4939
+    }
+  ]
+}
 ```
 
+This is the most reliable lab workflow: it works even when networking is imperfect.
 
+### Option B: Save and retrieve JSON via Swift (Object Storage)
 
-## VirtualBox notes
+If your job uploads `result.json` to a Swift container (e.g. `mlops-artifacts`), retrieve it like this:
 
-This project is designed to work even when:
-- floating IPs are unavailable
-- SSH access is not possible
+```bash
+# list objects
+openstack object list mlops-artifacts
 
-It relies on **cloud-init** and **Nova console logs** only.
+# download an object
+openstack object save mlops-artifacts sentiment-demo.json --file ./sentiment-demo.json
+```
+
+This is useful if you want to delete the instance but retain artifacts.
+
+---
+
+## Architecture diagram
+
+<img src="docs/nova-mlops-architecture.png" alt="nova-mlops-lab architecture diagram" width="900">
+
+## Cinder volumes (optional)
+
+Use **Cinder** when you want:
+
+- Data to survive instance deletion
+- Larger storage than the image root disk
+- Re-attachable job outputs between runs
+
+The CLI supports volumes via an optional flag such as:
+
+```bash
+--cinder-volume-size-gb <size>
+```
+
+Start without Cinder for simplicity; add it once you want persistent artifacts.
+
+---
+
+## Troubleshooting
+
+All troubleshooting pathways are documented in:
+
+👉 **[docs/troubleshooting.md](docs/troubleshooting.md)**
+
+This includes:
+- KVM / libvirt install and validation
+- Serial-console “hangs” that are actually paused VMs
+- External networking (`br-ex`) and routing fixes
+- Netplan persistence for `br-ex`
+- cloud-init failures caused by `/bin/sh` vs bash
+- Egress / NAT issues after restacks
 
 ---
 
@@ -292,17 +241,8 @@ pytest -q
 
 ## Roadmap
 
-- `openstack status <job>`
-- Filter logs to `[NOVA-MLOPS]`
-- Optional SSH exec path
-- Artifact collection
-- Multi-node jobs
+- `nova-mlops openstack status <job>`
+- Log filtering and structured markers (e.g. `[NOVA-MLOPS]`)
+- Artifact collection helpers (Swift-first)
+- Optional SSH execution path (add-on, not required)
 - CI (GitHub Actions)
-
----
-
-## KVM vs VirtualBox
-
-VirtualBox is ideal for learning and accessibility.
-
-For production-like networking (floating IPs, fewer L2 quirks), **KVM/libvirt** is recommended.
