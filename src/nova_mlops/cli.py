@@ -113,8 +113,8 @@ def openstack_run(
     conn = get_conn(cloud=cloud)
     res = launch_job(conn, name=name, image=image, flavor=flavor, network=network)
 
-    write_job_state(
-        name,
+    st = read_job_state(name) or {}
+    st.update(
         {
             "name": name,
             "backend": "openstack",
@@ -125,9 +125,9 @@ def openstack_run(
             "flavor": flavor,
             "network": network,
             "status": "RUNNING",
-        },
+        }
     )
-
+    write_job_state(name, st)
     print({"job": name, "server_id": res.server_id, "server_name": res.server_name})
 
 
@@ -209,31 +209,53 @@ def openstack_run_nlp(
     from nova_mlops.openstack.cloud_init import nlp_inference_cloud_init
 
     conn = get_conn(cloud=cloud)
+    #res = launch_job(
+    #    conn,
+    #    name=name,
+    #    image=image,
+    #    flavor=flavor,
+    #    network=network,
+    #    user_data=nlp_inference_cloud_init(name),
+    #    cinder_volume_size_gb=(cinder_volume_size_gb if cinder_volume_size_gb > 0 else None),
+    #    cinder_volume_name=f"mlops-{name}-results",
+    #)
     res = launch_job(
         conn,
         name=name,
         image=image,
         flavor=flavor,
         network=network,
-        user_data=nlp_inference_cloud_init(name),
         cinder_volume_size_gb=(cinder_volume_size_gb if cinder_volume_size_gb > 0 else None),
         cinder_volume_name=f"mlops-{name}-results",
     )
 
-
-    write_job_state(
-        name,
+    st = read_job_state(name) or {}
+    st.update(
         {
             "name": name,
             "backend": "openstack",
             "cloud": cloud,
             "server_id": res.server_id,
             "server_name": res.server_name,
-            "volume_id": res.volume_id,
+            "volume_id": getattr(res, "volume_id", None),
             "image": image,
             "flavor": flavor,
             "network": network,
             "status": "RUNNING",
-        },
+        }
     )
-    print({"job": name, "server_id": res.server_id, "server_name": res.server_name})
+    write_job_state(name, st)
+
+    #print({"job": name, "server_id": res.server_id, "server_name": res.server_name})
+    print(
+        {
+            "job": name,
+            "server_id": res.server_id,
+            "server_name": res.server_name,
+            "run_id": st.get("run_id"),
+            "swift_results": st.get("swift", {}).get("results_object"),
+            "swift_manifest": st.get("swift", {}).get("manifest_object"),
+            "swift_log": st.get("swift", {}).get("log_object"),
+        }
+    )
+

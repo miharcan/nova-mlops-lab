@@ -26,20 +26,19 @@ def nlp_inference_cloud_init(
     swift_results_object: str,
     swift_manifest_object: str,
     swift_log_object: str,
-    # Optional extra context for manifest (nice-to-have)
     image: str = "",
     flavor: str = "",
     network: str = "",
 ) -> str:
-    # IMPORTANT:
-    # - Do NOT use a Python f-string for the whole cloud-init template.
-    # - Use a token replace so any braces inside (python f-strings, etc.) remain literal.
     tpl = """#cloud-config
 package_update: true
 packages:
   - util-linux
   - python3-venv
   - python3-full
+
+output:
+  all: '| tee -a /dev/console /var/log/cloud-init-output.log'
 
 write_files:
   - path: /opt/mlops/run_sentiment.py
@@ -78,17 +77,22 @@ write_files:
 
       print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
 
-runcmd:
-  - |
+  - path: /usr/local/bin/nova-mlops.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
       set -euo pipefail
+
+      echo "[NOVA-MLOPS] nova-mlops.sh entered (job=${NOVA_MLOPS_JOB:-?} run_id=${NOVA_MLOPS_RUN_ID:-?})" >/dev/console
 
       # -----------------------------
       # Basic dirs + logging
       # -----------------------------
       mkdir -p /var/log/mlops /var/lib/nova-mlops
       LOG=/var/log/mlops/job.log
-      exec >>"$LOG" 2>&1
-      tail -n +1 -f "$LOG" >/dev/console &
+      # mirror stdout+stderr to both file and console
+      exec > >(tee -a "$LOG" /dev/console) 2>&1
 
       # -----------------------------
       # Run identity + object layout
@@ -112,8 +116,6 @@ runcmd:
       apt-get update -y
       python3 -m venv /opt/mlops-venv
       /opt/mlops-venv/bin/pip install --upgrade pip
-
-      # Deps: sentiment + openstack client for Swift
       /opt/mlops-venv/bin/pip install vaderSentiment python-openstackclient
 
       # -----------------------------
@@ -130,7 +132,7 @@ runcmd:
       echo "[NOVA-MLOPS] swift container list:"
       /opt/mlops-venv/bin/openstack container list || true
 
-      # Optional: download input.txt from Swift if it exists
+      # Optional: download input.txt
       INPUT=/tmp/input.txt
       if /opt/mlops-venv/bin/openstack object show "$NOVA_MLOPS_SWIFT_CONTAINER" input.txt >/dev/null 2>&1; then
         /opt/mlops-venv/bin/openstack object save "$NOVA_MLOPS_SWIFT_CONTAINER" input.txt --file "$INPUT"
@@ -144,7 +146,6 @@ runcmd:
       # -----------------------------
       DEV="/dev/vdb"
       MNT="/mnt/results"
-
       if [ -b "$DEV" ]; then
         mkdir -p "$MNT"
         if ! blkid "$DEV" >/dev/null 2>&1; then
@@ -161,11 +162,8 @@ runcmd:
       # Run sentiment + write result
       # -----------------------------
       /opt/mlops-venv/bin/python /opt/mlops/run_sentiment.py
-
-      # Standardize final result location
       cp -f /tmp/result.json /var/lib/nova-mlops/results.json
 
-      # Copy to mounted results path if present
       if [ "$MNT" != "/tmp" ]; then
         cp -f /tmp/result.json "$MNT/result.json"
         echo "[NOVA-MLOPS] copied result to $MNT/result.json"
@@ -173,10 +171,10 @@ runcmd:
         echo "[NOVA-MLOPS] MNT=/tmp, skipping copy"
       fi
 
-      # -----------------------------
-      # Write run manifest
-      # -----------------------------
-      python3 - <<'PY'
+# -----------------------------
+# Write run manifest
+# -----------------------------
+python3 - <<'PY'
 import json, os
 from datetime import datetime, timezone
 
@@ -198,24 +196,35 @@ manifest = {
 open("/var/lib/nova-mlops/manifest.json","w").write(json.dumps(manifest, indent=2))
 PY
 
-      sync
-      echo "[NOVA-MLOPS] job=$NOVA_MLOPS_JOB run_id=$NOVA_MLOPS_RUN_ID done; results ready"
 
-      # -----------------------------
-      # Upload results + manifest + log to Swift (prefix layout)
-      # -----------------------------
+      sync
+      echo "[NOVA-MLOPS] done; uploading to swift"
+
       /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" /var/lib/nova-mlops/results.json --name "$NOVA_MLOPS_RESULTS_OBJECT"
       /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" /var/lib/nova-mlops/manifest.json --name "$NOVA_MLOPS_MANIFEST_OBJECT"
       /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" "$LOG" --name "$NOVA_MLOPS_LOG_OBJECT"
 
-      echo "[NOVA-MLOPS] uploaded:"
-      echo "[NOVA-MLOPS] swift://$NOVA_MLOPS_SWIFT_CONTAINER/$NOVA_MLOPS_RESULTS_OBJECT"
-      echo "[NOVA-MLOPS] swift://$NOVA_MLOPS_SWIFT_CONTAINER/$NOVA_MLOPS_MANIFEST_OBJECT"
-      echo "[NOVA-MLOPS] swift://$NOVA_MLOPS_SWIFT_CONTAINER/$NOVA_MLOPS_LOG_OBJECT"
-
       echo "===MLOPS_RESULT==="; cat /tmp/result.json
-
       poweroff
+
+  - path: /var/lib/cloud/scripts/per-once/99-nova-mlops
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      echo "[NOVA-MLOPS] per-once starting job=__JOB_NAME__ run_id=__RUN_ID__" >/dev/console
+      /usr/local/bin/nova-mlops.sh
+
+runcmd:
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] RUNCMD HIT $(date -Is)" | tee /dev/console' ]
+  - [ bash, -lc, "ls -l /usr/local/bin/nova-mlops.sh /opt/mlops/run_sentiment.py | tee /dev/console" ]
+  - [ bash, -lc, "head -n 40 /usr/local/bin/nova-mlops.sh | sed -e 's/\\r$//' | tee /dev/console" ]
+  - [ bash, -lc, "/usr/local/bin/nova-mlops.sh" ]
+
+
+final_message: |
+  [NOVA-MLOPS] cloud-init finished. per-once script should have started the job.
 """
     return (
         tpl.replace("__JOB_NAME__", job_name)
@@ -228,3 +237,4 @@ PY
            .replace("__FLAVOR__", flavor)
            .replace("__NETWORK__", network)
     )
+
