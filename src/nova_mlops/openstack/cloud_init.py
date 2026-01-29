@@ -1,20 +1,36 @@
-def training_cloud_init(job_name: str) -> str:
+def training_cloud_init(job_name: str, run_id: str) -> str:
     """
     VBox-safe demo payload: emits logs to the Nova console via cloud-init.
     No SSH / no floating IP required.
     """
-    return f"""#cloud-config
+    tpl = """#cloud-config
 runcmd:
-  - echo "[NOVA-MLOPS] job={job_name} step=setup"
+  - echo "[NOVA-MLOPS] job=__JOB_NAME__ run_id=__RUN_ID__ step=setup"
   - sleep 2
-  - echo "[NOVA-MLOPS] job={job_name} step=train epoch=1 loss=0.91"
+  - echo "[NOVA-MLOPS] job=__JOB_NAME__ run_id=__RUN_ID__ step=train epoch=1 loss=0.91"
   - sleep 2
-  - echo "[NOVA-MLOPS] job={job_name} step=train epoch=2 loss=0.73"
+  - echo "[NOVA-MLOPS] job=__JOB_NAME__ run_id=__RUN_ID__ step=train epoch=2 loss=0.73"
   - sleep 2
-  - echo "[NOVA-MLOPS] job={job_name} step=done"
+  - echo "[NOVA-MLOPS] job=__JOB_NAME__ run_id=__RUN_ID__ step=done"
 """
+    return (
+        tpl.replace("__JOB_NAME__", job_name)
+           .replace("__RUN_ID__", run_id)
+    )
 
-def nlp_inference_cloud_init(job_name: str) -> str:
+
+def nlp_inference_cloud_init(
+    job_name: str,
+    run_id: str,
+    swift_container: str,
+    swift_results_object: str,
+    swift_manifest_object: str,
+    swift_log_object: str,
+    # Optional extra context for manifest (nice-to-have)
+    image: str = "",
+    flavor: str = "",
+    network: str = "",
+) -> str:
     # IMPORTANT:
     # - Do NOT use a Python f-string for the whole cloud-init template.
     # - Use a token replace so any braces inside (python f-strings, etc.) remain literal.
@@ -32,9 +48,11 @@ write_files:
     content: |
       import json
       import os
+      from datetime import datetime, timezone
       from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-      job = "__JOB_NAME__"
+      job = os.environ.get("NOVA_MLOPS_JOB", "__JOB_NAME__")
+      run_id = os.environ.get("NOVA_MLOPS_RUN_ID", "__RUN_ID__")
       input_path = "/tmp/input.txt"
 
       if os.path.exists(input_path):
@@ -52,26 +70,45 @@ write_files:
       for t in texts:
           s = a.polarity_scores(t)
           out.append({"text": t, **s})
-          print(f"[NOVA-MLOPS] job={job} compound={s['compound']:+.3f} text={t!r}", flush=True)
+          print(f"[NOVA-MLOPS] job={job} run_id={run_id} compound={s['compound']:+.3f} text={t!r}", flush=True)
 
+      result = {"job": job, "run_id": run_id, "results": out}
       with open("/tmp/result.json", "w", encoding="utf-8") as f:
-          json.dump({"job": job, "results": out}, f)
+          json.dump(result, f)
 
       print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
 
 runcmd:
   - |
-      set -eu
+      set -euo pipefail
 
-      mkdir -p /var/log/mlops
+      # -----------------------------
+      # Basic dirs + logging
+      # -----------------------------
+      mkdir -p /var/log/mlops /var/lib/nova-mlops
       LOG=/var/log/mlops/job.log
       exec >>"$LOG" 2>&1
       tail -n +1 -f "$LOG" >/dev/console &
 
-      JOB_NAME="__JOB_NAME__"
+      # -----------------------------
+      # Run identity + object layout
+      # -----------------------------
+      export NOVA_MLOPS_JOB="__JOB_NAME__"
+      export NOVA_MLOPS_RUN_ID="__RUN_ID__"
+      export NOVA_MLOPS_SWIFT_CONTAINER="__SWIFT_CONTAINER__"
+      export NOVA_MLOPS_RESULTS_OBJECT="__SWIFT_RESULTS_OBJECT__"
+      export NOVA_MLOPS_MANIFEST_OBJECT="__SWIFT_MANIFEST_OBJECT__"
+      export NOVA_MLOPS_LOG_OBJECT="__SWIFT_LOG_OBJECT__"
 
-      echo "[NOVA-MLOPS] job=$JOB_NAME starting"
+      export NOVA_MLOPS_IMAGE="__IMAGE__"
+      export NOVA_MLOPS_FLAVOR="__FLAVOR__"
+      export NOVA_MLOPS_NETWORK="__NETWORK__"
 
+      echo "[NOVA-MLOPS] job=$NOVA_MLOPS_JOB run_id=$NOVA_MLOPS_RUN_ID starting"
+
+      # -----------------------------
+      # Setup python env
+      # -----------------------------
       apt-get update -y
       python3 -m venv /opt/mlops-venv
       /opt/mlops-venv/bin/pip install --upgrade pip
@@ -95,9 +132,9 @@ runcmd:
 
       # Optional: download input.txt from Swift if it exists
       INPUT=/tmp/input.txt
-      if /opt/mlops-venv/bin/openstack object show mlops-artifacts input.txt >/dev/null 2>&1; then
-        /opt/mlops-venv/bin/openstack object save mlops-artifacts input.txt --file "$INPUT"
-        echo "[NOVA-MLOPS] downloaded swift://mlops-artifacts/input.txt -> $INPUT"
+      if /opt/mlops-venv/bin/openstack object show "$NOVA_MLOPS_SWIFT_CONTAINER" input.txt >/dev/null 2>&1; then
+        /opt/mlops-venv/bin/openstack object save "$NOVA_MLOPS_SWIFT_CONTAINER" input.txt --file "$INPUT"
+        echo "[NOVA-MLOPS] downloaded swift://$NOVA_MLOPS_SWIFT_CONTAINER/input.txt -> $INPUT"
       else
         echo "[NOVA-MLOPS] no swift input.txt found; using built-in texts"
       fi
@@ -125,6 +162,9 @@ runcmd:
       # -----------------------------
       /opt/mlops-venv/bin/python /opt/mlops/run_sentiment.py
 
+      # Standardize final result location
+      cp -f /tmp/result.json /var/lib/nova-mlops/results.json
+
       # Copy to mounted results path if present
       if [ "$MNT" != "/tmp" ]; then
         cp -f /tmp/result.json "$MNT/result.json"
@@ -133,23 +173,58 @@ runcmd:
         echo "[NOVA-MLOPS] MNT=/tmp, skipping copy"
       fi
 
+      # -----------------------------
+      # Write run manifest
+      # -----------------------------
+      python3 - <<'PY'
+import json, os
+from datetime import datetime, timezone
+
+manifest = {
+  "job": os.environ.get("NOVA_MLOPS_JOB"),
+  "run_id": os.environ.get("NOVA_MLOPS_RUN_ID"),
+  "timestamp_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z"),
+  "image": os.environ.get("NOVA_MLOPS_IMAGE"),
+  "flavor": os.environ.get("NOVA_MLOPS_FLAVOR"),
+  "network": os.environ.get("NOVA_MLOPS_NETWORK"),
+  "swift": {
+    "container": os.environ.get("NOVA_MLOPS_SWIFT_CONTAINER"),
+    "results_object": os.environ.get("NOVA_MLOPS_RESULTS_OBJECT"),
+    "manifest_object": os.environ.get("NOVA_MLOPS_MANIFEST_OBJECT"),
+    "log_object": os.environ.get("NOVA_MLOPS_LOG_OBJECT"),
+  },
+  "notes": "Generated by cloud-init on the instance"
+}
+open("/var/lib/nova-mlops/manifest.json","w").write(json.dumps(manifest, indent=2))
+PY
+
       sync
-      echo "[NOVA-MLOPS] job=$JOB_NAME done; result at $MNT/result.json"
+      echo "[NOVA-MLOPS] job=$NOVA_MLOPS_JOB run_id=$NOVA_MLOPS_RUN_ID done; results ready"
 
       # -----------------------------
-      # Upload result to Swift
+      # Upload results + manifest + log to Swift (prefix layout)
       # -----------------------------
-      TS=$(date +%s)
-      OBJ="results/${JOB_NAME}-${TS}.json"
-      /opt/mlops-venv/bin/openstack object create mlops-artifacts /tmp/result.json --name "$OBJ"
-      echo "[NOVA-MLOPS] uploaded swift://mlops-artifacts/$OBJ"
+      /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" /var/lib/nova-mlops/results.json --name "$NOVA_MLOPS_RESULTS_OBJECT"
+      /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" /var/lib/nova-mlops/manifest.json --name "$NOVA_MLOPS_MANIFEST_OBJECT"
+      /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" "$LOG" --name "$NOVA_MLOPS_LOG_OBJECT"
+
+      echo "[NOVA-MLOPS] uploaded:"
+      echo "[NOVA-MLOPS] swift://$NOVA_MLOPS_SWIFT_CONTAINER/$NOVA_MLOPS_RESULTS_OBJECT"
+      echo "[NOVA-MLOPS] swift://$NOVA_MLOPS_SWIFT_CONTAINER/$NOVA_MLOPS_MANIFEST_OBJECT"
+      echo "[NOVA-MLOPS] swift://$NOVA_MLOPS_SWIFT_CONTAINER/$NOVA_MLOPS_LOG_OBJECT"
 
       echo "===MLOPS_RESULT==="; cat /tmp/result.json
-      echo "===MLOPS_SWIFT_OBJECT==="
-      echo "container=mlops-artifacts object=$OBJ"
-      echo "===MLOPS_SWIFT_OBJECT_END==="
 
       poweroff
 """
-    return tpl.replace("__JOB_NAME__", job_name)
-
+    return (
+        tpl.replace("__JOB_NAME__", job_name)
+           .replace("__RUN_ID__", run_id)
+           .replace("__SWIFT_CONTAINER__", swift_container)
+           .replace("__SWIFT_RESULTS_OBJECT__", swift_results_object)
+           .replace("__SWIFT_MANIFEST_OBJECT__", swift_manifest_object)
+           .replace("__SWIFT_LOG_OBJECT__", swift_log_object)
+           .replace("__IMAGE__", image)
+           .replace("__FLAVOR__", flavor)
+           .replace("__NETWORK__", network)
+    )

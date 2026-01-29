@@ -9,10 +9,12 @@ STATE_DIR = Path(".nova-mlops/state")
 
 def write_job_state(job_name: str, state: dict[str, Any]) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    (STATE_DIR / f"{job_name}.json").write_text(json.dumps(state, indent=2))
+    path = STATE_DIR / f"{job_name}.json"
+    path.write_text(json.dumps(state, indent=2, sort_keys=True))
 
 
 def read_job_state(job_name: str) -> Optional[dict[str, Any]]:
-    p = STATE_DIR / f"{job_name}.json"
-    return json.loads(p.read_text()) if p.exists() else None
-
+    path = STATE_DIR / f"{job_name}.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())

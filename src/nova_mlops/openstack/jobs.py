@@ -3,15 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from nova_mlops.openstack.cloud_init import training_cloud_init
+from datetime import datetime, timezone
 
-import base64
+from nova_mlops.run_id import new_run_id
+from nova_mlops.jobs.state_store import write_job_state
+from nova_mlops.openstack.cloud_init import nlp_inference_cloud_init
+
 
 @dataclass
 class JobLaunchResult:
     server_id: str
     server_name: str
+    run_id: str
+    swift_container: str
+    swift_results_object: str
+    swift_manifest_object: str
+    swift_log_object: str
     volume_id: str | None = None
+
 
 
 def launch_job(
@@ -35,7 +44,16 @@ def launch_job(
     if not net:
         raise RuntimeError(f"Network not found: {network}")
 
-    server_name = f"mlops-{name}"
+    run_id = new_run_id()
+    
+    #server_name = f"mlops-{name}"
+    # include run_id in server name to avoid collisions
+    server_name = f"mlops-{name}-{run_id}"
+
+    swift_container = "mlops-artifacts"
+    swift_results_object = f"results/{name}/{run_id}/results.json"
+    swift_manifest_object = f"manifests/{name}/{run_id}.json"
+    swift_log_object = f"logs/{name}/{run_id}.log"
 
     volume_id: str | None = None
     bdmv2 = None
@@ -60,15 +78,32 @@ def launch_job(
         }]
 
 
-    ud = (user_data or training_cloud_init(name))
-    ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
+    #ud = (user_data or training_cloud_init(name))
+    #ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
+
+    if user_data is not None:
+        ud = user_data
+    else:
+        # For NLP job runner, use the richer template.
+        # If you're launching "training" jobs, call training_cloud_init(name, run_id) instead.
+        ud = nlp_inference_cloud_init(
+            job_name=name,
+            run_id=run_id,
+            swift_container=swift_container,
+            swift_results_object=swift_results_object,
+            swift_manifest_object=swift_manifest_object,
+            swift_log_object=swift_log_object,
+            image=image,
+            flavor=flavor,
+            network=network,
+        )
 
     create_kwargs = dict(
         name=server_name,
         image_id=img.id,
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
-        user_data=ud_b64,
+        user_data=ud  # ud_b64,
     )
 
     if bdmv2 is not None:
@@ -78,7 +113,39 @@ def launch_job(
 
 
     server = conn.compute.wait_for_server(server)
-    return JobLaunchResult(server_id=server.id, server_name=server.name, volume_id=volume_id)
+    state = {
+        "job": name,
+        "run_id": run_id,
+        "server_id": server.id,
+        "server_name": server.name,
+        "image": image,
+        "flavor": flavor,
+        "network": network,
+        "swift": {
+            "container": swift_container,
+            "results_object": swift_results_object,
+            "manifest_object": swift_manifest_object,
+            "log_object": swift_log_object,
+        },
+        "volume_id": volume_id,
+        "created_at": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+    }
+    write_job_state(name, state)
+
+    return JobLaunchResult(
+        server_id=server.id,
+        server_name=server.name,
+        run_id=run_id,
+        swift_container=swift_container,
+        swift_results_object=swift_results_object,
+        swift_manifest_object=swift_manifest_object,
+        swift_log_object=swift_log_object,
+        volume_id=volume_id,
+    )
+
 
 
 def get_console_logs(conn, server_id: str, length: int | None = None) -> str:
