@@ -37,8 +37,36 @@ runcmd:
 
       python3 -m venv /opt/mlops-venv
       /opt/mlops-venv/bin/pip install --upgrade pip
-      /opt/mlops-venv/bin/pip install vaderSentiment
 
+      # Install deps: sentiment + openstack client (for Swift)
+      /opt/mlops-venv/bin/pip install vaderSentiment python-openstackclient
+
+      # -----------------------------
+      # Swift auth via App Credential
+      # -----------------------------
+      export OS_AUTH_TYPE="v3applicationcredential"
+      export OS_AUTH_URL="http://192.168.122.109/identity/v3"
+      export OS_REGION_NAME="RegionOne"
+      export OS_INTERFACE="public"
+      export OS_IDENTITY_API_VERSION="3"
+      export OS_APPLICATION_CREDENTIAL_ID="dab821281aac43439313db09d055005f"
+      export OS_APPLICATION_CREDENTIAL_SECRET="rgZ-WTKyBNSKjdwhuUij2vxfjQce4Sr8vjm0IUffuUlIWvr21D7bL-8FaZDg1HK13TtJCJ32QFvm0_5LttsLPg"
+
+      echo "[NOVA-MLOPS] swift container list:"
+      /opt/mlops-venv/bin/openstack container list || true
+
+      # Optional: download input.txt from Swift if it exists
+      INPUT=/tmp/input.txt
+      if /opt/mlops-venv/bin/openstack object show mlops-artifacts input.txt >/dev/null 2>&1; then
+        /opt/mlops-venv/bin/openstack object save mlops-artifacts input.txt --file "$INPUT"
+        echo "[NOVA-MLOPS] downloaded swift://mlops-artifacts/input.txt -> $INPUT"
+      else
+        echo "[NOVA-MLOPS] no swift input.txt found; using built-in texts"
+      fi
+
+      # -----------------------------
+      # (Optional) Cinder mount logic
+      # -----------------------------
       DEV="/dev/vdb"
       MNT="/mnt/results"
 
@@ -54,33 +82,64 @@ runcmd:
         MNT="/tmp"
       fi
 
+      # -----------------------------
+      # Run sentiment + write result
+      # -----------------------------
       /opt/mlops-venv/bin/python - <<'PY'
-      import json
-      from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import json, os
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-      job = "{job_name}"
-      texts = [
+job = "{job_name}"
+input_path = "/tmp/input.txt"
+
+if os.path.exists(input_path):
+    with open(input_path, "r", encoding="utf-8") as f:
+        texts = [ln.strip() for ln in f.readlines() if ln.strip()]
+else:
+    texts = [
         "OpenStack executed this workload successfully.",
         "The networking setup was painful but now it's solid.",
         "I would not recommend debugging NAT at midnight."
-      ]
+    ]
 
-      a = SentimentIntensityAnalyzer()
-      out = []
-      for t in texts:
-          s = a.polarity_scores(t)
-          out.append({{"text": t, **s}})
-          print(f"[NOVA-MLOPS] job={{job}} compound={{s['compound']:+.3f}} text={{t!r}}", flush=True)
+a = SentimentIntensityAnalyzer()
+out = []
+for t in texts:
+    s = a.polarity_scores(t)
+    out.append({{"text": t, **s}})
+    print(f"[NOVA-MLOPS] job={{job}} compound={{s['compound']:+.3f}} text={{t!r}}", flush=True)
 
-      with open("/tmp/result.json", "w") as f:
-          json.dump({{"job": job, "results": out}}, f)
+with open("/tmp/result.json", "w", encoding="utf-8") as f:
+    json.dump({{"job": job, "results": out}}, f)
 
-      print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
-      PY
+print("[NOVA-MLOPS] wrote /tmp/result.json", flush=True)
+PY
 
-      cp -f /tmp/result.json "$MNT/result.json"
+      # Copy to mounted results path if present
+      if [ "$MNT" != "/tmp" ]; then
+        cp -f /tmp/result.json "$MNT/result.json"
+        echo "[NOVA-MLOPS] copied result to $MNT/result.json"
+      else
+        echo "[NOVA-MLOPS] MNT=/tmp, result stays at /tmp/result.json"
+      fi
+
       sync
-      echo "[NOVA-MLOPS] job={job_name} done; result at $MNT/result.json"
+      echo "[NOVA-MLOPS] job={job_name} done"
+
+      # -----------------------------
+      # Upload result to Swift
+      # -----------------------------
+      TS=$(date +%s)
+      OBJ="results/{job_name}-${{TS}}.json"
+      /opt/mlops-venv/bin/openstack object create mlops-artifacts /tmp/result.json --name "$OBJ" || true
+      echo "[NOVA-MLOPS] uploaded swift://mlops-artifacts/$OBJ"
+
+      echo "===MLOPS_RESULT==="; cat /tmp/result.json
+
+      echo "===MLOPS_SWIFT_OBJECT==="
+      echo "container=mlops-artifacts object=$OBJ"
+      echo "===MLOPS_SWIFT_OBJECT_END==="
+
       poweroff
 """
 
