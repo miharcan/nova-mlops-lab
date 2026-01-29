@@ -48,7 +48,7 @@ write_files:
       #!/usr/bin/env bash
       set -euxo pipefail
       echo "[NOVA-MLOPS] per-once start $(date -Is) job=__JOB_NAME__ run_id=__RUN_ID__" | tee /dev/console
-      exec /usr/local/bin/nova-mlops.sh
+      /usr/local/bin/nova-mlops.sh
 
   - path: /opt/mlops/run_sentiment.py
     permissions: "0644"
@@ -219,6 +219,13 @@ write_files:
 
       echo "===MLOPS_RESULT==="; cat /tmp/result.json
       poweroff
+
+
+runcmd:
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] RUNCMD HIT $(date -Is)" | tee /dev/console' ]
+  - [ bash, -lc, 'ls -l /var/lib/cloud/scripts/per-once | tee /dev/console' ]
+  - [ bash, -lc, 'chmod +x /var/lib/cloud/scripts/per-once/99-nova-mlops || true' ]
+  - [ bash, -lc, '/var/lib/cloud/scripts/per-once/99-nova-mlops' ]
 
 
 final_message: |
