@@ -77,10 +77,6 @@ def launch_job(
             "delete_on_termination": False,
         }]
 
-
-    #ud = (user_data or training_cloud_init(name))
-    #ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
-
     if user_data is not None:
         ud = user_data
     else:
@@ -104,7 +100,7 @@ def launch_job(
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
         config_drive=True,
-        user_data=ud  # ud_b64,
+        user_data=ud
     )
 
     if bdmv2 is not None:
