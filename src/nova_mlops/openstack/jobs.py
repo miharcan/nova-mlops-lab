@@ -9,6 +9,8 @@ from nova_mlops.run_id import new_run_id
 from nova_mlops.jobs.state_store import write_job_state
 from nova_mlops.openstack.cloud_init import nlp_inference_cloud_init
 
+import base64
+
 
 @dataclass
 class JobLaunchResult:
@@ -77,11 +79,10 @@ def launch_job(
             "delete_on_termination": False,
         }]
 
+    # pick the final ud FIRST
     if user_data is not None:
         ud = user_data
     else:
-        # For NLP job runner, use the richer template.
-        # If you're launching "training" jobs, call training_cloud_init(name, run_id) instead.
         ud = nlp_inference_cloud_init(
             job_name=name,
             run_id=run_id,
@@ -94,13 +95,19 @@ def launch_job(
             network=network,
         )
 
+    if not isinstance(ud, str) or not ud.lstrip().startswith("#cloud-"):
+        raise ValueError("user_data must be cloud-init text starting with #cloud-config or #cloud-boothook")
+
+    # THEN base64 encode that final string
+    ud_b64 = base64.b64encode(ud.encode("utf-8")).decode("ascii")
+
     create_kwargs = dict(
         name=server_name,
         image_id=img.id,
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
         config_drive=True,
-        user_data=ud
+        user_data=ud_b64,
     )
 
     if bdmv2 is not None:
