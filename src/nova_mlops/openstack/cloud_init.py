@@ -120,6 +120,10 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
 
+      mkdir -p /var/log/mlops /var/lib/nova-mlops
+      LOG=/var/log/mlops/job.log
+      exec > >(tee -a "$LOG" /dev/console) 2>&1
+
       echo "[NOVA-MLOPS] nova-mlops.sh entered (job=${NOVA_MLOPS_JOB:-?} run_id=${NOVA_MLOPS_RUN_ID:-?})" >/dev/console
 
       # -----------------------------
@@ -223,9 +227,9 @@ bootcmd:
   - [ bash, -lc, 'echo "[NOVA-MLOPS] stage=bootcmd ts=$(date -Is)"' ]
 
 runcmd:
-  - [ bash, -lc, 'echo "[NOVA-MLOPS] stage=runcmd ts=$(date -Is)"' ]
-  - [ bash, -lc, 'echo "[NOVA-MLOPS] step=train epoch=1 loss=0.91"' ]
-  - [ bash, -lc, 'echo "[NOVA-MLOPS] step=done"' ]
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] stage=runcmd starting $(date -Is)"' ]
+  - [ bash, -lc, '/usr/local/bin/nova-mlops.sh' ]
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] stage=runcmd finished $(date -Is)"' ]
 
 final_message: "[NOVA-MLOPS] stage=final ts=%TIMESTAMP% finished"
 """
