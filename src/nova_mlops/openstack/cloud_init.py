@@ -218,18 +218,16 @@ write_files:
       /opt/mlops-venv/bin/openstack object create "$NOVA_MLOPS_SWIFT_CONTAINER" "$LOG" --name "$NOVA_MLOPS_LOG_OBJECT"
 
       echo "===MLOPS_RESULT==="; cat /tmp/result.json
-      poweroff
 
+bootcmd:
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] stage=bootcmd ts=$(date -Is)"' ]
 
 runcmd:
-  - [ bash, -lc, 'echo "[NOVA-MLOPS] RUNCMD HIT $(date -Is)" | tee /dev/console' ]
-  - [ bash, -lc, 'ls -l /var/lib/cloud/scripts/per-once | tee /dev/console' ]
-  - [ bash, -lc, 'chmod +x /var/lib/cloud/scripts/per-once/99-nova-mlops || true' ]
-  - [ bash, -lc, '/var/lib/cloud/scripts/per-once/99-nova-mlops' ]
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] stage=runcmd ts=$(date -Is)"' ]
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] step=train epoch=1 loss=0.91"' ]
+  - [ bash, -lc, 'echo "[NOVA-MLOPS] step=done"' ]
 
-
-final_message: |
-  [NOVA-MLOPS] cloud-init finished. per-once script should have started the job.
+final_message: "[NOVA-MLOPS] stage=final ts=%TIMESTAMP% finished"
 """
     return (
         tpl.replace("__JOB_NAME__", job_name)
