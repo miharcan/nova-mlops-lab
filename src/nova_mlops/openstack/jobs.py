@@ -103,6 +103,7 @@ def launch_job(
         image_id=img.id,
         flavor_id=flv.id,
         networks=[{"uuid": net.id}],
+        config_drive=True,
         user_data=ud  # ud_b64,
     )
 

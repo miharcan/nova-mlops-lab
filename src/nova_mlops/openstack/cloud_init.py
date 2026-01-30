@@ -4,6 +4,9 @@ def training_cloud_init(job_name: str, run_id: str) -> str:
     No SSH / no floating IP required.
     """
     tpl = """#cloud-config
+output:
+  all: '| tee -a /dev/console /var/log/cloud-init-output.log'
+
 runcmd:
   - echo "[NOVA-MLOPS] job=__JOB_NAME__ run_id=__RUN_ID__ step=setup"
   - sleep 2
@@ -47,7 +50,7 @@ write_files:
     content: |
       #!/usr/bin/env bash
       set -euxo pipefail
-      echo "[NOVA-MLOPS] per-once start $(date -Is) job=__JOB_NAME__ run_id=__RUN_ID__" | tee /dev/console
+      echo "[NOVA-MLOPS] per-once start $(date -Is) job=__JOB_NAME__ run_id=__RUN_ID__" >/dev/console
       /usr/local/bin/nova-mlops.sh
 
   - path: /opt/mlops/run_sentiment.py
@@ -124,7 +127,7 @@ write_files:
       LOG=/var/log/mlops/job.log
       exec > >(tee -a "$LOG" /dev/console) 2>&1
 
-      echo "[NOVA-MLOPS] nova-mlops.sh entered (job=${NOVA_MLOPS_JOB:-?} run_id=${NOVA_MLOPS_RUN_ID:-?})" >/dev/console
+      echo "[NOVA-MLOPS] nova-mlops.sh entered job=${NOVA_MLOPS_JOB:-?} run_id=${NOVA_MLOPS_RUN_ID:-?}"
 
       # -----------------------------
       # Basic dirs + logging
