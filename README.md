@@ -83,6 +83,12 @@ You need:
 - `openstack` CLI working (`openstack token issue`)
 - Python **≥ 3.10**
 
+If `openstack` CLI is missing, install it in your active virtual environment:
+
+```bash
+pip install python-openstackclient
+```
+
 ### OpenStack authentication
 
 `openstacksdk` uses the same auth sources as the OpenStack CLI:
@@ -129,7 +135,10 @@ openstack server list
 > **Important:** `ubuntu-24.04` requires at least `m1.small`.
 
 ```bash
-nova-mlops openstack run sentiment-demo   --image ubuntu-24.04   --flavor m1.small   --network private
+nova-mlops openstack run sentiment-demo \
+  --image ubuntu-24.04 \
+  --flavor m1.small \
+  --network private
 ```
 
 ### 4) Read logs
@@ -183,8 +192,9 @@ If your job uploads `result.json` to a Swift container (e.g. `mlops-artifacts`),
 # list objects
 openstack object list mlops-artifacts
 
-# download an object
-openstack object save mlops-artifacts sentiment-demo.json --file ./sentiment-demo.json
+# download the run-scoped results object
+# (object path is: results/<job>/<run_id>/results.json)
+openstack object save mlops-artifacts results/sentiment-demo/<run_id>/results.json --file ./sentiment-demo.json
 ```
 
 This is useful if you want to delete the instance but retain artifacts.
@@ -241,7 +251,7 @@ pytest -q
 
 ## Roadmap
 
-- `nova-mlops openstack status <job>`
+- `nova-mlops openstack status <job>` (or richer status fields in existing `nova-mlops status <job>`)
 - Log filtering and structured markers (e.g. `[NOVA-MLOPS]`)
 - Artifact collection helpers (Swift-first)
 - Optional SSH execution path (add-on, not required)
